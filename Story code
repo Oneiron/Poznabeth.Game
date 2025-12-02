@@ -1,0 +1,409 @@
+using UnityEngine;
+using UnityEngine;
+using TMPro;
+using Ink.Runtime;
+using UnityEngine.UI;
+using System.Collections.Generic;
+using UnityEngine.SceneManagement;  // ДОБАВИТЬ: для загрузки сцены меню и выхода
+
+public class StoryManager : MonoBehaviour
+{
+    public TextAsset inkJSON;
+    public TextMeshProUGUI dialogueText;
+    public TextMeshProUGUI speakerName;  // Привяжи UI для имени в Inspector!
+
+    // Панель и кнопки
+    public GameObject choicesPanel;
+    public List<Button> choiceButtons;
+
+    // Точка спавна персонажей (пустой Transform в сцене)
+    public Transform characterSpawnPoint;
+
+    // SpriteRenderer для фона (привяжи GameObject в Inspector, Sorting Layer: Default, Order: -10)
+    public SpriteRenderer backgroundRenderer;
+
+    // Префабы для персонажей (привяжи готовые префабы в Inspector)
+    public GameObject dolphinPrefab;   // Wave
+    public GameObject dartPrefab;      // Dart
+    public GameObject crabPrefab;      // Crab
+    public GameObject turtlePrefab;    // Turtle
+    public GameObject seahorsePrefab;  // Seahorse
+
+    // Спрайты для фонов (добавь свои в Inspector!)
+    public Sprite фон1Sprite;   // фон1.png
+    public Sprite фон2Sprite;   // фон2.png
+    public Sprite фон3Sprite;   // фон3.png
+    public Sprite фон4Sprite;   // фон4.png
+
+    // Элементы паузного меню (привяжи в Inspector!)
+    public GameObject pauseMenuPanel;   // Панель меню (Canvas с Screen Space - Overlay)
+    public Button continueButton;       // Кнопка "Продолжить" или "Continue"
+    public Button exitButton;           // Кнопка "Выход" или "Exit To Menu"
+
+    public string menuSceneName = "StartingScene";  // Имя сцены главного меню
+
+    // НОВОЕ: AudioSource для музыки (привяжи GameObject с AudioSource в Inspector!)
+    public AudioSource audioSource;
+
+    // НОВОЕ: Словарь для музыки (добавьте AudioClip в Inspector публично, затем заполните в Start)
+    public Dictionary<string, AudioClip> musicClips = new Dictionary<string, AudioClip>();
+
+    private Story story;
+    private bool isPaused = false;
+    private bool storyEnded = false;  // Флаг окончания истории
+
+    private Dictionary<string, GameObject> characterPrefabs;
+    private Dictionary<string, Sprite> backgroundSprites;
+    private GameObject currentCharacterInstance;
+
+    // НОВОЕ: Текущий трек музыки
+    private string currentMusicName = null;
+
+    void Start()
+    {
+        if (inkJSON == null)
+        {
+            Debug.LogError("Ink JSON not assigned!");
+            return;
+        }
+
+        if (characterSpawnPoint == null)
+        {
+            Debug.LogError("Character Spawn Point not assigned! Create an empty GameObject and assign its Transform.");
+            return;
+        }
+
+        if (backgroundRenderer == null)
+        {
+            Debug.LogError("Background Renderer not assigned! Create a GameObject with SpriteRenderer and assign it.");
+            return;
+        }
+
+        if (pauseMenuPanel == null || continueButton == null || exitButton == null)
+        {
+            Debug.LogWarning("Pause menu elements not fully assigned! Menu might not work.");
+        }
+
+        story = new Story(inkJSON.text);
+        story.ChoosePathString("start");
+
+        // Словарь префабов
+        characterPrefabs = new Dictionary<string, GameObject>
+        {
+            { "Wave", dolphinPrefab },
+            { "Dart", dartPrefab },
+            { "Crab", crabPrefab },
+            { "Turtle", turtlePrefab },
+            { "Seahorse", seahorsePrefab },
+            { "Narrative", null }  // Для нарратива — скрываем
+        };
+
+        // Словарь фонов
+        backgroundSprites = new Dictionary<string, Sprite>
+        {
+            { "фон1", фон1Sprite },
+            { "фон2", фон2Sprite },
+            { "фон3", фон3Sprite },
+            { "фон4", фон4Sprite },
+        };
+
+        // НОВОЕ: Инициализация AudioSource
+        if (audioSource == null)
+        {
+            Debug.LogError("AudioSource not assigned! Attach an AudioSource component to the scene and assign it in Inspector.");
+        }
+        else
+        {
+            audioSource.loop = true;  // Цикличное воспроизведение по умолчанию
+        }
+
+        // НОВОЕ: Заполнение словаря музыки (добавьте публичные AudioClip-поля в Inspector, например public AudioClip backgroundMusic; и в Start добавьте musicClips["background_music"] = backgroundMusic;)
+        // Пример: musicClips.Add("background_music", yourAudioClip); // Настройте здесь ваши треки!
+
+        currentCharacterInstance = null;
+
+        // Начальный фон
+        if (backgroundSprites.ContainsKey("фон1") && фон1Sprite != null)
+        {
+            backgroundRenderer.sprite = фон1Sprite;
+            SetBackgroundScale();
+            Debug.Log("Initial background set: фон1");
+        }
+        else
+        {
+            Debug.LogWarning("Initial background sprite (фон1) not assigned!");
+        }
+
+        // Инициализация меню (скрываем)
+        pauseMenuPanel.SetActive(false);
+        continueButton.onClick.AddListener(ContinueGame);
+        exitButton.onClick.AddListener(() => { SceneManager.LoadScene(menuSceneName); Debug.Log("Immediate load to StartingScene"); });  // Изменено: переделано в анонимный метод для немедленного вызова
+
+        storyEnded = false;
+
+        DisplayNextLine();
+    }
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape) && !isPaused)
+        {
+            PauseGame();
+        }
+        else if (Input.GetKeyDown(KeyCode.Escape) && isPaused)
+        {
+            ContinueGame();
+        }
+
+        if (!isPaused && Input.GetKeyDown(KeyCode.Space) && story.canContinue)
+        {
+            DisplayNextLine();
+        }
+
+        // Если история окончена, Space вызывает мгновенный переход в меню
+        if (Input.GetKeyDown(KeyCode.Space) && storyEnded && !isPaused)
+        {
+            SceneManager.LoadScene(menuSceneName);  // Мгновенная загрузка, без задержек
+            Debug.Log("Immediate load to StartingScene after story end and Space press");
+        }
+    }
+
+    // Метод паузы
+    public void PauseGame()
+    {
+        isPaused = true;
+        Time.timeScale = 0f;
+        pauseMenuPanel.SetActive(true);
+        Debug.Log("Game paused");
+    }
+
+    // Метод снятия паузы
+    public void ContinueGame()
+    {
+        isPaused = false;
+        Time.timeScale = 1f;
+        pauseMenuPanel.SetActive(false);
+        Debug.Log("Game continued");
+    }
+
+    // Метод для масштаба фона
+    private void SetBackgroundScale()
+    {
+        if (backgroundRenderer == null || backgroundRenderer.sprite == null) return;
+
+        Sprite sprite = backgroundRenderer.sprite;
+        float spriteWidth = sprite.bounds.size.x;
+        float spriteHeight = sprite.bounds.size.y;
+
+        Camera cam = Camera.main;
+        if (cam != null && cam.orthographic)
+        {
+            float screenHeightInUnits = cam.orthographicSize * 2f;
+            float screenWidthInUnits = screenHeightInUnits * cam.aspect;
+
+            float scaleX = screenWidthInUnits / spriteWidth;
+            float scaleY = screenHeightInUnits / spriteHeight;
+            float scale = Mathf.Min(scaleX, scaleY);
+
+            backgroundRenderer.transform.localScale = new Vector3(scale, scale, 1f);
+            Debug.Log("Background scale set: " + scale);
+        }
+        else
+        {
+            Debug.LogWarning("Camera not set or not orthographic! Manual scale needed.");
+        }
+    }
+
+    void DisplayNextLine()
+    {
+        if (!story.canContinue)
+        {
+            dialogueText.text = "Конец истории.";  // Или "The End." для английского
+            speakerName.text = "";
+            choicesPanel.SetActive(false);
+
+            // Скрываем персонажа
+            if (currentCharacterInstance != null)
+            {
+                Destroy(currentCharacterInstance);
+                currentCharacterInstance = null;
+            }
+
+            // Возвращаем начальный фон
+            if (backgroundSprites.ContainsKey("фон1"))
+            {
+                backgroundRenderer.sprite = фон1Sprite;
+                SetBackgroundScale();
+            }
+
+            // Устанавливаем флаг окончания
+            storyEnded = true;
+            Debug.Log("Story ended. Waiting for Space to load menu.");  // Новый дебаг
+
+            return;
+        }
+
+        string text = story.Continue().Trim();
+
+        string currentSprite = null;
+        foreach (string tag in story.currentTags)
+        {
+            if (tag.StartsWith("background: "))
+            {
+                string bgName = tag.Substring("background: ".Length).Trim();
+                if (backgroundSprites.ContainsKey(bgName))
+                {
+                    backgroundRenderer.sprite = backgroundSprites[bgName];
+                    SetBackgroundScale();
+                    Debug.Log("Background changed to: " + bgName);
+                }
+                else
+                {
+                    Debug.LogWarning("Unknown background: " + bgName);
+                }
+            }
+            else if (tag.StartsWith("sprite: "))
+            {
+                string prefabName = tag.Substring("sprite: ".Length).Trim();
+                currentSprite = prefabName;
+                Debug.Log("Prefab tag found: " + prefabName);
+            }
+            // НОВОЕ: Парсинг музыки
+            else if (tag.StartsWith("music: "))
+            {
+                string musicName = tag.Substring("music: ".Length).Trim();
+                PlayMusic(musicName);
+                Debug.Log("Music tag: " + musicName);
+            }
+        }
+
+        ParseSpeakerAndDialogue(text, currentSprite);
+        DisplayChoices();
+    }
+
+    void ParseSpeakerAndDialogue(string fullText, string currentSprite = null)
+    {
+        string speaker = "";
+
+        if (!string.IsNullOrEmpty(currentSprite))
+        {
+            speaker = currentSprite;
+            speakerName.text = currentSprite + ":";  // Показываем имя
+            Debug.Log("Using prefab from tag: " + currentSprite);
+        }
+        else
+        {
+            int colonIndex = fullText.IndexOf(':');
+            if (colonIndex > 0 && colonIndex < 50)
+            {
+                string potentialName = fullText.Substring(0, colonIndex).Trim();
+                string dialogue = fullText.Substring(colonIndex + 1).Trim();
+
+                if (!string.IsNullOrWhiteSpace(potentialName) && potentialName.Length < 20)
+                {
+                    speakerName.text = potentialName + ":";
+                    dialogueText.text = dialogue;
+                    speaker = potentialName;
+                    Debug.Log("Speaker parsed: " + potentialName);
+                }
+            }
+            if (string.IsNullOrEmpty(speaker))
+            {
+                speakerName.text = "";
+                dialogueText.text = fullText;
+                speaker = "Narrative";
+                Debug.Log("Narrative: " + fullText);
+            }
+        }
+
+        if (currentCharacterInstance != null)
+        {
+            Destroy(currentCharacterInstance);
+            currentCharacterInstance = null;
+        }
+
+        if (characterPrefabs.ContainsKey(speaker) && characterPrefabs[speaker] != null)
+        {
+            currentCharacterInstance = Instantiate(characterPrefabs[speaker], characterSpawnPoint);
+            Debug.Log("Prefab spawned: " + speaker);
+        }
+        else
+        {
+            Debug.Log("No prefab for: " + speaker);
+        }
+    }
+
+    void DisplayChoices()
+    {
+        foreach (Button btn in choiceButtons)
+        {
+            btn.gameObject.SetActive(false);
+        }
+        choicesPanel.SetActive(false);
+
+        if (story.currentChoices.Count > 0)
+        {
+            choicesPanel.SetActive(true);
+
+            for (int i = 0; i < story.currentChoices.Count && i < choiceButtons.Count; i++)
+            {
+                Choice choice = story.currentChoices[i];
+                choiceButtons[i].gameObject.SetActive(true);
+                TextMeshProUGUI buttonText = choiceButtons[i].GetComponentInChildren<TextMeshProUGUI>();
+                if (buttonText != null)
+                {
+                    buttonText.text = choice.text;
+                }
+
+                choiceButtons[i].onClick.RemoveAllListeners();
+                int choiceIndex = i;
+                choiceButtons[i].onClick.AddListener(() => OnChoiceClicked(choiceIndex));
+            }
+        }
+    }
+
+    void OnChoiceClicked(int choiceIndex)
+    {
+        Choice choice = story.currentChoices[choiceIndex];
+        Debug.Log("Choice: " + choice.text);
+
+        story.ChooseChoiceIndex(choiceIndex);
+        choicesPanel.SetActive(false);
+        DisplayNextLine();
+    }
+
+    // НОВЫЙ МЕТОД: Воспроизведение музыки
+    void PlayMusic(string musicName)
+    {
+        if (audioSource == null) return;
+
+        if (musicName == currentMusicName) return;  // Не перезапускать тот же трек
+
+        if (musicName == "none" || musicName == "stop")
+        {
+            audioSource.Stop();
+            currentMusicName = null;
+            Debug.Log("Music stopped");
+        }
+        else if (musicClips.ContainsKey(musicName))
+        {
+            audioSource.Stop();  // Остановить предыдущий трек
+            audioSource.clip = musicClips[musicName];
+            audioSource.Play();
+            currentMusicName = musicName;
+            Debug.Log("Playing music: " + musicName);
+        }
+        else
+        {
+            Debug.LogWarning("Unknown music: " + musicName + ". Add it to the musicClips dictionary.");
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (currentCharacterInstance != null)
+        {
+            Destroy(currentCharacterInstance);
+        }
+    }
+}
