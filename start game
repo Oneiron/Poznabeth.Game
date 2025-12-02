@@ -1,0 +1,48 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;  // Не забудьте это using
+
+public class MenuManager : MonoBehaviour
+{
+    // НОВОЕ: AudioSource для музыки (привяжи GameObject с AudioSource в Inspector!)
+    public AudioSource audioSource;
+
+    // НОВОЕ: AudioClip для музыки главного меню (добавьте свой аудио-файл в Inspector)
+    public AudioClip menuMusicClip;
+
+    void Start()
+    {
+        // НОВОЕ: Настройка и запуск музыки главного меню
+        if (audioSource != null && menuMusicClip != null)
+        {
+            audioSource.loop = true;  // Цикличное воспроизведение
+            audioSource.clip = menuMusicClip;
+            audioSource.Play();
+            Debug.Log("Menu music started");
+        }
+        else
+        {
+            Debug.LogWarning("AudioSource or MenuMusicClip not assigned in MenuManager!");
+        }
+    }
+
+    public void StartGame()
+    {
+        // Перед загрузкой сцены можно остановить музыку, если не хотите её в новелле (в StoryManager своя музыка)
+        // audioSource.Stop();  // Раскомментируйте, если нужно остановить музыку меню при переходе
+
+        SceneManager.LoadScene("StoryScene");  // Замените "StoryScene" на точное имя вашей сцены новеллы
+    }
+
+    // ДОБАВИТЬ: Новая функция для выхода из игры (привяжи к кнопке UI в Inspector: OnClick -> MenuManager -> QuitGame)
+    public void QuitGame()
+    {
+        // Оше при выходе останавливаем музыку
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+        }
+
+        Debug.Log("Exiting game...");  // Для дебага (в билде логи не видны, но полезно в editor)
+        Application.Quit();  // Выход из приложения; работает только в билде, не в редакторе Unity
+    }
+}
